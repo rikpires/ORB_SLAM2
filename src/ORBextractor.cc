@@ -73,7 +73,8 @@ const int PATCH_SIZE = 31;
 const int HALF_PATCH_SIZE = 15;
 const int EDGE_THRESHOLD = 19;
 
-
+// angle = atan(Ev,Eu)
+// Eu = Sigma(u*val), Ev = Sigma(v*val)
 static float IC_Angle(const Mat& image, Point2f pt,  const vector<int> & u_max)
 {
     int m_01 = 0, m_10 = 0;
@@ -103,7 +104,7 @@ static float IC_Angle(const Mat& image, Point2f pt,  const vector<int> & u_max)
     return fastAtan2((float)m_01, (float)m_10);
 }
 
-
+// 256 bit descriptor
 const float factorPI = (float)(CV_PI/180.f);
 static void computeOrbDescriptor(const KeyPoint& kpt,
                                  const Mat& img, const Point* pattern,
@@ -431,7 +432,7 @@ ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
     }
 
     mvImagePyramid.resize(nlevels);
-
+    // Number of features for each pyramid level
     mnFeaturesPerLevel.resize(nlevels);
     float factor = 1.0f / scaleFactor;
     float nDesiredFeaturesPerScale = nfeatures*(1 - factor)/(1 - (float)pow((double)factor, (double)nlevels));
@@ -451,6 +452,7 @@ ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
 
     //This is for orientation
     // pre-compute the end of a row in a circular patch
+    // circular patch for FAST feature
     umax.resize(HALF_PATCH_SIZE + 1);
 
     int v, v0, vmax = cvFloor(HALF_PATCH_SIZE * sqrt(2.f) / 2 + 1);
@@ -468,7 +470,7 @@ ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
         ++v0;
     }
 }
-
+// Compute orientation for each feature point
 static void computeOrientation(const Mat& image, vector<KeyPoint>& keypoints, const vector<int>& umax)
 {
     for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
@@ -477,7 +479,8 @@ static void computeOrientation(const Mat& image, vector<KeyPoint>& keypoints, co
         keypoint->angle = IC_Angle(image, keypoint->pt, umax);
     }
 }
-
+// Divide parent node to four childs, assign key points to each child
+// Dumplicated key points?
 void ExtractorNode::DivideNode(ExtractorNode &n1, ExtractorNode &n2, ExtractorNode &n3, ExtractorNode &n4)
 {
     const int halfX = ceil(static_cast<float>(UR.x-UL.x)/2);
@@ -535,7 +538,8 @@ void ExtractorNode::DivideNode(ExtractorNode &n1, ExtractorNode &n2, ExtractorNo
         n4.bNoMore = true;
 
 }
-
+// Build octree for input key points, then retain the best point in each node (non-maximum suppression)
+// The input maximum node number N will inpact the octree level (and cell size)
 vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>& vToDistributeKeys, const int &minX,
                                        const int &maxX, const int &minY, const int &maxY, const int &N, const int &level)
 {
@@ -602,7 +606,7 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
         int nToExpand = 0;
 
         vSizeAndPointerToNode.clear();
-
+        // While in this tree level
         while(lit!=lNodes.end())
         {
             if(lit->bNoMore)
@@ -658,7 +662,7 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
                         lNodes.front().lit = lNodes.begin();
                     }
                 }
-
+                // Erase current one and go next
                 lit=lNodes.erase(lit);
                 continue;
             }
@@ -670,6 +674,7 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
         {
             bFinish = true;
         }
+        // Handle if total nodes number approaches MAXIMUN
         else if(((int)lNodes.size()+nToExpand*3)>N)
         {
 
@@ -761,11 +766,13 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
 
     return vResultKeys;
 }
-
+// For each level, respectively,
+// Find key points, select most scored key points in each sub region (nodes in octree)
+// No descriptors yet
 void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoints)
 {
     allKeypoints.resize(nlevels);
-
+    // Size of sub image, same in every pyramid scale?
     const float W = 30;
 
     for (int level = 0; level < nlevels; ++level)
@@ -804,7 +811,8 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
                     continue;
                 if(maxX>maxBorderX)
                     maxX = maxBorderX;
-
+                    
+                // Find fast feature for sub image
                 vector<cv::KeyPoint> vKeysCell;
                 FAST(mvImagePyramid[level].rowRange(iniY,maxY).colRange(iniX,maxX),
                      vKeysCell,iniThFAST,true);
@@ -830,7 +838,7 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
 
         vector<KeyPoint> & keypoints = allKeypoints[level];
         keypoints.reserve(nfeatures);
-
+        // Generate octree for this pyramid level
         keypoints = DistributeOctTree(vToDistributeKeys, minBorderX, maxBorderX,
                                       minBorderY, maxBorderY,mnFeaturesPerLevel[level], level);
 
@@ -1039,7 +1047,7 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
     for (size_t i = 0; i < keypoints.size(); i++)
         computeOrbDescriptor(keypoints[i], image, &pattern[0], descriptors.ptr((int)i));
 }
-
+// Build pyramid, find key points and build descriptors
 void ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPoint>& _keypoints,
                       OutputArray _descriptors)
 { 
@@ -1052,6 +1060,7 @@ void ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPo
     // Pre-compute the scale pyramid
     ComputePyramid(image);
 
+    // For each image level, compute the key points and organize with octree
     vector < vector<KeyPoint> > allKeypoints;
     ComputeKeyPointsOctTree(allKeypoints);
     //ComputeKeyPointsOld(allKeypoints);
@@ -1081,7 +1090,7 @@ void ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPo
         if(nkeypointsLevel==0)
             continue;
 
-        // preprocess the resized image
+        // Preprocess the resized image
         Mat workingMat = mvImagePyramid[level].clone();
         GaussianBlur(workingMat, workingMat, Size(7, 7), 2, 2, BORDER_REFLECT_101);
 
